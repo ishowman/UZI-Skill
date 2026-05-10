@@ -20,7 +20,7 @@
    - `lib/pipeline/` (v3.0 管道架构)
    - `lib/report/` (v3.2 拆分的渲染子模块)
 
-3. **Python 环境用 `~/miniconda3/bin/python`** · 系统 `/usr/bin/python3` 没装 akshare / pytest
+3. **Python 环境**：任意装了 `akshare` / `pytest` 的 Python 3.10+ 都行（macOS 系统自带的 `/usr/bin/python3` 通常没装这些 · 用 `pip install -r requirements.txt` 装一下；conda / venv / pyenv 都可以）
 
 4. **pytest 必须 `cd skills/deep-analysis/scripts` 再跑** · 相对 import 要求 cwd 在 scripts/
 
@@ -68,24 +68,24 @@ pipeline.run_pipeline(ticker)
 
 ## 审视任务清单模板（给你参考）
 
-如果被要求审视 v3 重构 · 按此流程查：
+如果被要求审视 v3 重构 · 按此流程查（`<repo-root>` 替换为你 clone 的目录）：
 
 ```bash
-cd /Users/weibohan/product/financial/UZI-Skill
+cd <repo-root>          # 例如 ~/code/UZI-Skill 或 git clone 到的任意路径
 
 # 1. 确认入口位置（不要找 scripts/run.py）
 ls run.py                          # ✅ 应该存在
 ls skills/deep-analysis/scripts/run.py  # ❌ 应该不存在（正常）
 
-# 2. Python 环境
-~/miniconda3/bin/python --version
+# 2. Python 环境（任意装了 akshare/pytest 的 Python 3.10+ 都行）
+python3 --version
 
 # 3. cd 到 scripts 跑 pytest
 cd skills/deep-analysis/scripts
-~/miniconda3/bin/python -m pytest tests/ -q --ignore=tests/test_v2_13_playwright_strategy.py
+python3 -m pytest tests/ -q --ignore=tests/test_v2_13_playwright_strategy.py
 
 # 4. 验证 import 链
-~/miniconda3/bin/python -c "
+python3 -c "
 import sys; sys.path.insert(0, '.')
 import run_real_test as rrt
 import assemble_report as ar
@@ -101,7 +101,7 @@ print('re-export complete')
 "
 
 # 5. 真机 e2e (已 cached 的股 · resume)
-~/miniconda3/bin/python -c "
+python3 -c "
 import sys, os; sys.path.insert(0, '.')
 os.environ['UZI_NO_AUTO_OPEN'] = '1'
 from lib.pipeline.run import run_pipeline

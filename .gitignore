@@ -35,6 +35,15 @@ skills/deep-analysis/scripts/_*.py
 .env.*.local
 *.local.env
 *.key
+
+# v3.4.1 · 防御性 ignore：cookies / session / 私人状态文件
+**/cookies.json
+**/.uzi-skill/
+*.pem
+*.p12
+id_rsa*
+.netrc
+
 docs/screenshots/full-page.png
 
 # Local-only drafts (not for remote)
