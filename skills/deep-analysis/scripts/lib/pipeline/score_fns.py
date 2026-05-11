@@ -974,14 +974,44 @@ def generate_synthesis(raw: dict, dims_scored: dict, panel: dict, agent_analysis
 
     overall = fund_score * 0.6 + consensus * 0.4
 
-    # v2.11 · verdict 阈值重校准 · 从未有股能 ≥ 85 (值得重仓档空设)，
-    # 论坛+微信反馈显示用户心理及格线是 65 分（@崔越 @W.D @睡袍布太少 @一印成王）
+    # v2.11 · verdict 阈值重校准 · 论坛+微信反馈用户心理及格线是 65 分
     # 调整：85/70/55/40 → 80/65/50/35，让白马/真强股进"可以蹲一蹲"档
-    if overall >= 80: verdict_label = "值得重仓"
-    elif overall >= 65: verdict_label = "可以蹲一蹲"
-    elif overall >= 50: verdict_label = "观望优先"
-    elif overall >= 35: verdict_label = "谨慎"
-    else: verdict_label = "回避"
+    # v3.4.1 · 用户反馈"神剑股份(002361 58分) 和博云新材(002297 60分) verdict 都是观望优先 ·
+    #         看不出差异"。50-65 这个 15 分跨度太宽 · 拆成 50-55 / 55-60 / 60-65 三档 ·
+    #         同时把流派分歧度作为后缀显示让差异更明显.
+    if overall >= 80:
+        verdict_label = "值得重仓"
+    elif overall >= 70:
+        verdict_label = "可以蹲一蹲"
+    elif overall >= 65:
+        verdict_label = "可以蹲（偏弱）"   # v3.4.1 新增细分
+    elif overall >= 60:
+        verdict_label = "观望偏多"          # v3.4.1 新增细分
+    elif overall >= 55:
+        verdict_label = "观望中性"          # v3.4.1 新增细分
+    elif overall >= 50:
+        verdict_label = "观望偏空"          # v3.4.1 新增细分
+    elif overall >= 35:
+        verdict_label = "谨慎"
+    else:
+        verdict_label = "回避"
+
+    # v3.4.1 · 追加流派分歧指标 · 让用户能看到"5 派看空 + 2 派看多"这种结构信息
+    school_scores = panel.get("school_scores", {})
+    if school_scores:
+        bullish_schools = [s["label"] for s in school_scores.values()
+                          if s.get("verdict") in ("重仓", "买入")]
+        bearish_schools = [s["label"] for s in school_scores.values()
+                          if s.get("verdict") == "回避"]
+        if bullish_schools and bearish_schools:
+            verdict_label += f" · {len(bullish_schools)} 派看多 / {len(bearish_schools)} 派看空"
+        elif bullish_schools:
+            verdict_label += f" · {len(bullish_schools)} 派看多"
+        elif bearish_schools:
+            verdict_label += f" · {len(bearish_schools)} 派看空"
+
+    # v3.4.1 · 同时记 verdict_detail · 含 fund + consensus 精确分（让相近股票能区分）
+    verdict_detail = f"基本面 {fund_score:.1f} · 共识 {consensus:.1f}"
 
     # Pick bull and bear for great divide
     # CRITICAL: must pick from ACTUALLY bullish/bearish investors, never misattribute
@@ -1182,6 +1212,7 @@ def generate_synthesis(raw: dict, dims_scored: dict, panel: dict, agent_analysis
         "name": name,
         "overall_score": round(overall, 1),
         "verdict_label": verdict_label,
+        "verdict_detail": verdict_detail,  # v3.4.1 · 基本面/共识精确分 · 区分相近 verdict 段的票
         "fundamental_score": round(fund_score, 1),
         "panel_consensus": round(consensus, 1),
         # v2.15.4 · 按流派分数也带到 synthesis · 让报告层无须回拉 panel.json

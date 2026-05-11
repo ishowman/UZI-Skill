@@ -7,6 +7,25 @@
 
 ---
 
+## v3.4.1 (2026-05-11 · verdict 粒度细化 · 相近股票可区分)
+
+### BUG · 50-65 verdict 段过宽 · 神剑(58) + 博云(59.9) 都判 "观望优先" 看不出差异
+- **症状**：用户反馈"神剑股份、博云新材 这两支其实买入逻辑也不一样，但评分一致"
+- **位置**：`lib/pipeline/score_fns.py::generate_synthesis` line 980+ verdict ladder
+- **根因**：v2.11 verdict 5 档 (80/65/50/35) · 50-65 "观望优先" 跨度 15 分 · 神剑 58 + 博云 59.9 都在里面 · 用户感知一致
+- **真实差异**：流派分上有差距（成长派 +13 · 中式价投 +15）· overall 也差 1.9 · 但被 verdict 段掩盖
+- **修法**（3 层细化 · 不动核心 fund_score 公式以避免破坏白马评分）：
+  1. verdict 7 档：80/70/65/60/55/50/35 (50-65 拆三档 · 65-70 加偏弱)
+  2. verdict label 追加 "X 派看多 / Y 派看空"
+  3. synthesis 加 verdict_detail = "基本面 X · 共识 Y" · assemble_report 渲染时追加显示
+- **回归测试**：`tests/test_v3_4_1_verdict_granularity.py` (5 tests) + 更新 `test_v2_11_scoring_calibration` 阈值
+- **未来改该区域注意事项**：
+  - 不要直接改 score_dimensions 来放大差异 · 它是 v2.11 校准过的 · 改会破坏白马评分
+  - 真正的根因是 score_dimensions 给缺数据维度默认 5-7 (中性) · 抹平了 ROE/营收差异 · 未来 v3.5+ 可考虑 "active-weighted"
+  - verdict 阈值增加时 · 同步更新 `test_v2_11_scoring_calibration::_verdict_for` ladder
+
+---
+
 ## v3.4.0 (2026-05-10 · 基金/ETF 持仓循环分析 + baostock ≥0.9.1)
 
 ### FEATURE · ETF/LOF 持仓循环分析（v2.10.4 early-exit 改为 opt-in 批量）

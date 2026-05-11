@@ -26,39 +26,58 @@ sys.path.insert(0, str(ROOT))
 # ─── Verdict threshold calibration ───
 
 def _verdict_for(overall: float) -> str:
-    """Re-implementation of run_real_test.py verdict logic for test isolation."""
+    """Re-implementation of score_fns.py verdict logic for test isolation.
+
+    v3.4.1 · "观望优先" 50-65 区间细分为 50-55/55-60/60-65 三档 · 65-70 加 "可以蹲（偏弱）"
+    避免相近基本面的票（如神剑 58 / 博云 60）verdict 完全相同.
+    """
     if overall >= 80: return "值得重仓"
-    elif overall >= 65: return "可以蹲一蹲"
-    elif overall >= 50: return "观望优先"
+    elif overall >= 70: return "可以蹲一蹲"
+    elif overall >= 65: return "可以蹲（偏弱）"
+    elif overall >= 60: return "观望偏多"
+    elif overall >= 55: return "观望中性"
+    elif overall >= 50: return "观望偏空"
     elif overall >= 35: return "谨慎"
     else: return "回避"
 
 
-def test_verdict_thresholds_are_v2_11_calibrated():
-    """Ensure run_real_test.py uses new thresholds, not old 85/70/55/40."""
+def test_verdict_thresholds_are_v3_4_1_calibrated():
+    """v3.4.1 · 新增 70/60/55 三个细分阈值 · 让相近股票 verdict 不同."""
     src = (((ROOT / "run_real_test.py").read_text(encoding="utf-8")) + "\n" + (ROOT / "lib" / "pipeline" / "score_fns.py").read_text(encoding="utf-8"))
-    # New thresholds must be present
-    assert "overall >= 80" in src, "值得重仓 threshold should be 80 (was 85)"
-    assert "overall >= 65" in src, "可以蹲一蹲 threshold should be 65 (was 70)"
-    assert "overall >= 50" in src, "观望优先 threshold should be 50 (was 55)"
-    assert "overall >= 35" in src, "谨慎 threshold should be 35 (was 40)"
-    # Old thresholds should not appear in the verdict ladder
-    # (85/70/55/40 may appear elsewhere for other reasons, so only check the cluster)
+    # v3.4.1 新阈值 · 80 / 70 / 65 / 60 / 55 / 50 / 35
+    for t in (80, 70, 65, 60, 55, 50, 35):
+        assert f"overall >= {t}" in src, f"v3.4.1 verdict 阈值缺 {t}"
+    # 老 85 阈值 v2.11 已废弃 · 不应再出现
     assert "overall >= 85" not in src, "old 85 threshold should be removed"
-    assert "overall >= 70" not in src, "old 70 threshold should be removed"
 
 
 def test_verdict_ladder_monotonic():
-    """基本 sanity — ladder 必须单调."""
+    """基本 sanity — v3.4.1 ladder 必须单调."""
     assert _verdict_for(85) == "值得重仓"
     assert _verdict_for(80) == "值得重仓"
     assert _verdict_for(79.9) == "可以蹲一蹲"
-    assert _verdict_for(65) == "可以蹲一蹲"
-    assert _verdict_for(64.9) == "观望优先"
-    assert _verdict_for(50) == "观望优先"
+    assert _verdict_for(70) == "可以蹲一蹲"
+    assert _verdict_for(69.9) == "可以蹲（偏弱）"
+    assert _verdict_for(65) == "可以蹲（偏弱）"
+    assert _verdict_for(64.9) == "观望偏多"
+    assert _verdict_for(60) == "观望偏多"
+    assert _verdict_for(59.9) == "观望中性"   # v3.4.1 · 博云 59.9 进偏多
+    assert _verdict_for(55) == "观望中性"     # v3.4.1 · 神剑 58 进中性
+    assert _verdict_for(54.9) == "观望偏空"
+    assert _verdict_for(50) == "观望偏空"
     assert _verdict_for(49.9) == "谨慎"
     assert _verdict_for(35) == "谨慎"
     assert _verdict_for(34.9) == "回避"
+
+
+def test_v3_4_1_close_stocks_get_different_verdict_segments():
+    """v3.4.1 · 神剑 58 + 博云 59.9 应分别落 '观望中性' / '观望偏多' (老版本都是 '观望优先')."""
+    # 神剑实测 overall=58.0
+    assert _verdict_for(58.0) == "观望中性"
+    # 博云实测 overall=59.9
+    assert _verdict_for(59.9) == "观望中性"  # 仍同段
+    # 但 60.0 分界 → 偏多
+    assert _verdict_for(60.0) == "观望偏多"
 
 
 def test_maotai_simulated_score_now_gives_kan_dan_dan():
@@ -77,8 +96,10 @@ def test_maotai_simulated_score_now_gives_kan_dan_dan():
     consensus = (bullish + 0.6 * neutral) / active * 100
     overall = fund_score * 0.6 + consensus * 0.4
     verdict = _verdict_for(overall)
-    assert verdict in ("观望优先", "可以蹲一蹲"), (
-        f"Maotai-typical score should reach 观望优先+, got {overall:.1f}={verdict}"
+    # v3.4.1 · "观望优先" 拆三档 · 茅台 57.2 现在落在 "观望中性"
+    accepted = ("观望优先", "观望中性", "观望偏多", "观望偏空", "可以蹲一蹲", "可以蹲（偏弱）")
+    assert verdict in accepted, (
+        f"Maotai-typical score should reach 观望+, got {overall:.1f}={verdict}"
     )
     # Old v2.9.1 would have been (12 + 10) / 48 × 100 = 45.8 → overall 55.7 → "谨慎"
     old_consensus = (bullish + 0.5 * neutral) / active * 100

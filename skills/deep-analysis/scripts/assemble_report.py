@@ -410,7 +410,10 @@ def assemble(ticker: str) -> Path:
         "{{INDUSTRY}}": str(_safe(basic.get("industry"))),
         "{{OVERALL_SCORE}}": str(syn.get("overall_score", 0)),
         "{{OVERALL_SCORE_INT}}": str(int(syn.get("overall_score", 0))),
-        "{{VERDICT_LABEL}}": _safe(syn.get("verdict_label")),
+        # v3.4.1 · verdict_label 后追加 detail（基本面/共识精确分）让相近 verdict 段的票仍能区分
+        "{{VERDICT_LABEL}}": _safe(syn.get("verdict_label")) + (
+            f" · {syn['verdict_detail']}" if syn.get("verdict_detail") else ""
+        ),
         "{{TRAP_LEVEL}}": trap_level,
         "{{TRAP_COLOR}}": trap_color,
         "{{TRAP_EMOJI}}": trap_emoji,
