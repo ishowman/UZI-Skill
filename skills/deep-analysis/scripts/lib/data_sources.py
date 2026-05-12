@@ -101,6 +101,16 @@ def _fetch_price_tencent_qt(market: str, code_raw: str) -> dict:
             pe = _f(39)
             if pe is not None:
                 out["pe_ttm"] = pe
+        if len(parts) > 44:
+            circ_mcap_yi = _f(44)
+            if circ_mcap_yi is not None:
+                out["circulating_cap"] = f"{circ_mcap_yi}亿"
+                out["circulating_cap_raw"] = circ_mcap_yi * 1e8
+        if len(parts) > 45:
+            total_mcap_yi = _f(45)
+            if total_mcap_yi is not None:
+                out["market_cap"] = f"{total_mcap_yi}亿"
+                out["market_cap_raw"] = total_mcap_yi * 1e8
         if len(parts) > 46:
             pb = _f(46)
             if pb is not None:
@@ -119,6 +129,168 @@ def _retry(fn, attempts: int = 3, sleep: float = 0.8):
             last_err = e
             time.sleep(sleep * (i + 1))
     raise last_err
+
+
+def _append_fallback_snap(out: dict, marker: str) -> None:
+    """Append a fallback marker once, preserving existing provenance."""
+    current = str(out.get("_fallback_snap") or "")
+    parts = [p for p in current.split("+") if p]
+    if marker not in parts:
+        parts.append(marker)
+    out["_fallback_snap"] = "+".join(parts)
+
+
+def _merge_missing_basic_fields(out: dict, source: dict, marker: str, fields: tuple[str, ...] | None = None) -> bool:
+    """Fill only missing basic fields from a fallback source.
+
+    This keeps the existing source priority stable: earlier successful providers
+    win, later providers only patch holes. Returns True when at least one field
+    was filled so provenance can be audited via _fallback_snap.
+    """
+    if not source:
+        return False
+    fields = fields or (
+        "name", "price", "change_pct", "open", "prev_close", "high", "low",
+        "pe_ttm", "pb", "market_cap", "market_cap_raw",
+        "circulating_cap", "circulating_cap_raw", "industry", "listed_date",
+    )
+    changed = False
+    for field in fields:
+        if out.get(field) in (None, "", "-") and source.get(field) not in (None, "", "-"):
+            out[field] = source[field]
+            changed = True
+    if changed:
+        _append_fallback_snap(out, marker)
+    return changed
+
+
+def _fetch_a_share_name_from_ak_code_name(ti: TickerInfo) -> dict:
+    """Return {name} from AkShare's A-share code-name table, or {}."""
+    if ak is None:
+        return {}
+    df = ak.stock_info_a_code_name()
+    if df is None or df.empty:
+        return {}
+    code_col = "code" if "code" in df.columns else ("代码" if "代码" in df.columns else df.columns[0])
+    name_col = "name" if "name" in df.columns else ("名称" if "名称" in df.columns else df.columns[1])
+    row = df[df[code_col].astype(str).str.zfill(6) == ti.code]
+    if row.empty:
+        return {}
+    name = str(row.iloc[0][name_col]).strip()
+    return {"name": name} if name else {}
+
+
+def _safe_float(value):
+    try:
+        if value in (None, "", "-"):
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _fetch_a_share_basic_from_baostock(ti: TickerInfo, *, include_quote: bool = True) -> dict:
+    """Return missing-friendly A-share basic fields from Baostock, or {}.
+
+    Baostock is slower but avoids the Eastmoney/XueQiu HTTP/TLS path. It is used
+    as a field-level fallback, not as a replacement for preferred sources.
+    """
+    from .providers import baostock_provider as _bs_mod
+    bs_p = _bs_mod._BaostockProvider()
+    if not bs_p.is_available():
+        return {}
+    bs_p._ensure_login()
+    import baostock as _bs
+    bs_code = bs_p._bs_code(ti.code)
+    source: dict = {}
+
+    if include_quote:
+        from datetime import datetime, timedelta
+        start_dt = (datetime.now() - timedelta(days=14)).strftime("%Y-%m-%d")
+        rs = _bs.query_history_k_data_plus(
+            bs_code,
+            "date,close,peTTM,pbMRQ,psTTM",
+            start_date=start_dt,
+            frequency="d", adjustflag="2",
+        )
+        rows = []
+        while rs.error_code == "0" and rs.next():
+            rows.append(rs.get_row_data())
+        if rows:
+            last = rows[-1]
+            price = _safe_float(last[1])
+            pe_ttm = _safe_float(last[2])
+            pb = _safe_float(last[3])
+            ps_ttm = _safe_float(last[4])
+            if price is not None:
+                source["price"] = price
+            if pe_ttm is not None:
+                source["pe_ttm"] = round(pe_ttm, 2)
+            if pb is not None:
+                source["pb"] = round(pb, 2)
+            if ps_ttm is not None:
+                source["ps_ttm"] = round(ps_ttm, 2)
+
+    rs2 = _bs.query_stock_basic(code=bs_code)
+    info = []
+    while rs2.error_code == "0" and rs2.next():
+        info.append(rs2.get_row_data())
+    if info:
+        if len(info[0]) > 1 and info[0][1]:
+            source["name"] = info[0][1]
+        if len(info[0]) > 2 and info[0][2]:
+            source["listed_date"] = info[0][2]
+    return source
+
+
+def _ensure_a_share_basic_fields(out: dict, ti: TickerInfo) -> dict:
+    """Field-level fallback gate for A-share basic data.
+
+    Earlier fetchers may partially succeed (for example, price/PE/PB but no
+    name). This gate patches only missing report-critical fields after the normal
+    chain has run, preserving all already populated values.
+    """
+    critical_fields = ("name", "price", "pe_ttm", "pb", "market_cap", "industry", "listed_date")
+
+    def _missing_any(fields: tuple[str, ...]) -> bool:
+        return any(out.get(f) in (None, "", "-") for f in fields)
+
+    if not _missing_any(critical_fields):
+        return out
+
+    try:
+        qt = _fetch_price_tencent_qt("A", ti.code)
+        _merge_missing_basic_fields(out, qt, "field:tencent_qt", fields=(
+            "name", "price", "change_pct", "open", "prev_close", "high", "low",
+            "pe_ttm", "pb", "market_cap", "market_cap_raw", "circulating_cap", "circulating_cap_raw",
+        ))
+    except Exception as e:
+        out["_field_tencent_err"] = f"{type(e).__name__}: {str(e)[:80]}"
+
+    if _missing_any(("name", "price", "pe_ttm", "pb", "listed_date")):
+        try:
+            bs_source = _fetch_a_share_basic_from_baostock(ti, include_quote=_missing_any(("price", "pe_ttm", "pb")))
+            _merge_missing_basic_fields(out, bs_source, "field:baostock", fields=(
+                "name", "price", "pe_ttm", "pb", "listed_date",
+            ))
+            if out.get("ps_ttm") in (None, "", "-") and bs_source.get("ps_ttm") not in (None, "", "-"):
+                out["ps_ttm"] = bs_source["ps_ttm"]
+        except Exception as e:
+            out["_field_baostock_err"] = f"{type(e).__name__}: {str(e)[:80]}"
+
+    if out.get("name") in (None, "", "-"):
+        try:
+            _merge_missing_basic_fields(out, _fetch_a_share_name_from_ak_code_name(ti), "field:ak_code_name", fields=("name",))
+        except Exception as e:
+            out["_field_ak_code_name_err"] = f"{type(e).__name__}: {str(e)[:80]}"
+
+    if out.get("industry") in (None, "", "-"):
+        industry = _known_stock_industry(ti.code)
+        if industry:
+            out["industry"] = industry
+            _append_fallback_snap(out, "field:known_industry")
+
+    return out
 
 
 # ─────────────────────────────────────────────────────────────
@@ -260,7 +432,7 @@ def _fetch_basic_a(ti: TickerInfo) -> dict:
                 "listed_date": str(info.get("发行日期", "")),
             })
             out["_fallback_snap"] = "xueqiu-spot"
-            return out
+            return _ensure_a_share_basic_fields(out, ti)
     except Exception as e:
         out["_xq_spot_err"] = str(e)
 
@@ -289,7 +461,7 @@ def _fetch_basic_a(ti: TickerInfo) -> dict:
                 "pe_ttm": float(row["市盈率-动态"].iloc[0]) if row["市盈率-动态"].iloc[0] not in ("", "-", None) else out.get("pe_ttm"),
                 "pb": float(row["市净率"].iloc[0]) if row["市净率"].iloc[0] not in ("", "-", None) else out.get("pb"),
             })
-            return out
+            return _ensure_a_share_basic_fields(out, ti)
     except Exception as e:
         out["_snap_err"] = str(e)
 
@@ -465,7 +637,7 @@ def _fetch_basic_a(ti: TickerInfo) -> dict:
             out["pe_ttm"] = out.get("pe_ttm") or qt.get("pe_ttm")
             out["pb"] = out.get("pb") or qt.get("pb")
             out["name"] = out.get("name") or qt.get("name")
-            out["_fallback_snap"] = (out.get("_fallback_snap", "") + "+tencent_qt").lstrip("+")
+            _append_fallback_snap(out, "tencent_qt")
 
     # v3.4.2 · Windows + Clash + Schannel TLS 兜底 · baostock 完全绕过 SSL 兼容性问题
     # 群友反馈：东方财富 Schannel TLS 不兼容 / 即使走 DIRECT 也还是 Schannel ·
@@ -512,6 +684,7 @@ def _fetch_basic_a(ti: TickerInfo) -> dict:
         except Exception as e:
             out["_baostock_err"] = f"{type(e).__name__}: {str(e)[:80]}"
 
+    _ensure_a_share_basic_fields(out, ti)
     return out
 
 
