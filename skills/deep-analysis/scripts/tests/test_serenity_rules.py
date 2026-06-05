@@ -139,6 +139,53 @@ def test_school_lock_I_only_serenity():
         os.environ.pop("UZI_SCHOOL", None)
 
 
+# ─── issue #72 · 具身智能 / 人形机器人卡位链 ──────────────────────
+
+def test_embodied_ai_harmonic_reducer_bullish():
+    """issue #72 · 绿的谐波(谐波减速器) 是具身智能卡脖子点 · Serenity 本人推过 ·
+    小盘 + 高切换成本 → 必须 bullish · 不能再判 0。"""
+    from lib.investor_evaluator import evaluate
+    f = _features("绿的谐波", "谐波减速器/工业机器人零部件", 250,
+                  "人形机器人核心部件 谐波减速器 国产替代 特斯拉 Optimus 供应链",
+                  switching=9, scale=8, growth="40%")
+    assert f["ai_chain_hit"] is True, "谐波减速器/人形机器人必须命中 AI 链(具身智能)"
+    assert f["ai_chokepoint_score"] >= 70, f"卡位分应 ≥70，实际 {f['ai_chokepoint_score']}"
+    r = evaluate("serenity", f)
+    assert r["signal"] == "bullish", f"具身智能卡点应 bullish，实际 {r['signal']}"
+
+
+def test_embodied_ai_screw_and_sensor_hit_chain():
+    """行星滚柱丝杠 / 六维力传感器 等具身智能上游核心件也应命中 AI 链。"""
+    for name, ind, chain in [
+        ("贝斯特", "行星滚柱丝杠", "人形机器人 行星滚柱丝杠 丝杠"),
+        ("柯力传感", "六维力传感器", "六维力 力传感器 机器人 触觉传感器"),
+        ("鸣志电器", "空心杯电机", "空心杯电机 无框力矩电机 机器人执行器"),
+    ]:
+        f = _features(name, ind, 200, chain, switching=8, scale=7, growth="35%")
+        assert f["ai_chain_hit"] is True, f"{name} 应命中具身智能链 · 实际未命中"
+
+
+def test_large_cap_robot_assembler_not_overscored():
+    """大盘机器人整机(低切换/低规模) · 命中关键词但卡位不硬 → 不应满分。
+    验证关键词扩列没有"开闸放水"——卡位 gating 仍生效。"""
+    from lib.investor_evaluator import evaluate
+    f = _features("某机器人整机大厂", "工业机器人整机", 3000,
+                  "机器人整机组装", switching=3, scale=4, growth="15%")
+    r = evaluate("serenity", f)
+    assert r["signal"] != "bullish", f"大盘整机卡位不硬 · 不应 bullish · 实际 {r['signal']}"
+    assert f["ai_chokepoint_score"] < 60, f"卡位分应 <60，实际 {f['ai_chokepoint_score']}"
+
+
+def test_baijiu_still_excluded_after_robotics_kw():
+    """加机器人关键词后 · 白酒仍必须 0(不在 AI 链) · 防误伤。"""
+    from lib.investor_evaluator import evaluate
+    f = _features("贵州茅台", "白酒", 23000, "白酒酿造产业链",
+                  switching=9, scale=9, growth="12%")
+    assert f["ai_chain_hit"] is False
+    r = evaluate("serenity", f)
+    assert r["signal"] == "bearish" and r["score"] == 0
+
+
 if __name__ == "__main__":
     import pytest
     raise SystemExit(pytest.main([__file__, "-v"]))
